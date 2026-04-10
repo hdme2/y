@@ -28,16 +28,14 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
-    let mimeType = req.body.mimeType;
+    const mimeType = req.body.mimeType;
     const text = req.body.text;
     const file = req.body.file;
     
-    let contentsParts: any[] = [];
+    let content: any = { role: 'user', parts: [] };
 
     if (text) {
-      contentsParts.push({
-        text: `Here is the data from a quote document (text format):\n\n${text}`
-      });
+      content.parts.push({ text: `Here is the data from a quote document (text format):\n\n${text}` });
     } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
@@ -60,16 +58,14 @@ export default async function handler(req: any, res: any) {
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          contentsParts.push({
-            text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}`
-          });
+          content.parts.push({ text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}` });
         } catch (e) {
         }
       }
 
-      if (contentsParts.length === 0) {
+      if (content.parts.length === 0) {
         const base64Data = fileBuffer.toString('base64');
-        contentsParts.push({
+        content.parts.push({
           inlineData: {
             data: base64Data,
             mimeType: mimeType || 'image/png',
@@ -80,7 +76,7 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    contentsParts.push({
+    content.parts.push({
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
       Return a JSON array of objects. Each object MUST have these fields:
       - barcode (string, the EAN/UPC barcode, prioritize this)
@@ -98,7 +94,7 @@ export default async function handler(req: any, res: any) {
     });
 
     const requestBody = {
-      contents: [{ parts: contentsParts }],
+      contents: [content],
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
@@ -107,7 +103,7 @@ export default async function handler(req: any, res: any) {
 
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
