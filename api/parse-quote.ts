@@ -107,7 +107,7 @@ export default async function handler(req: any, res: any) {
 
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
