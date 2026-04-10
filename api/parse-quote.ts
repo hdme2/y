@@ -34,7 +34,6 @@ export default async function handler(req: any, res: any) {
     
     let contentsParts: any[] = [];
 
-    // Handle text input
     if (text) {
       contentsParts.push({
         text: `Here is the data from a quote document (text format):\n\n${text}`
@@ -46,7 +45,6 @@ export default async function handler(req: any, res: any) {
       
       const fileBuffer = Buffer.from(file, 'base64');
 
-      // Handle Excel files
       if (
         mimeType?.includes('spreadsheet') ||
         mimeType?.includes('excel') ||
@@ -57,7 +55,6 @@ export default async function handler(req: any, res: any) {
           const sheetNames = workbook.SheetNames;
           let allCsvData = '';
           
-          // 讀取所有工作表
           for (const sheetName of sheetNames) {
             const csvData = xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName]);
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
@@ -67,7 +64,6 @@ export default async function handler(req: any, res: any) {
             text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}`
           });
         } catch (e) {
-          mimeType = 'image/png';
         }
       }
 
@@ -109,15 +105,15 @@ export default async function handler(req: any, res: any) {
       }
     };
 
-    // 构建 API URL
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     }
 
     const fetchOptions: RequestInit = {
@@ -127,6 +123,7 @@ export default async function handler(req: any, res: any) {
     };
 
     console.log('API URL:', apiUrl.replace(config.apiKey, '***'));
+    console.log('Model:', modelName);
     console.log('Use proxy:', useProxy);
 
     const response = await fetch(apiUrl, fetchOptions);
