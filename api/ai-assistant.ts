@@ -36,11 +36,13 @@ export default async function handler(req: any, res: any) {
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
     
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     }
 
     const fetchOptions: RequestInit = {
