@@ -28,7 +28,9 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
-    const { file, mimeType, text } = req.body;
+    let mimeType = req.body.mimeType;
+    const text = req.body.text;
+    const file = req.body.file;
     
     let contentsParts: any[] = [];
 
