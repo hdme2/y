@@ -21,7 +21,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const { message } = req.body;
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image-preview';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image';
 
     const requestBody = {
       contents: [{ parts: [{ text: message }] }],

@@ -92,7 +92,7 @@ Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100
     };
 
     let apiUrl = '';
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image-preview';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image';
     
     if (config.baseUrl && !config.baseUrl.includes('googleapis.com')) {
       const base = config.baseUrl.replace(/\/$/, '');
