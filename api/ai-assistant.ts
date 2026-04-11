@@ -21,6 +21,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const { message } = req.body;
+    const modelName = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 
     const requestBody = {
       contents: [{ parts: [{ text: message }] }],
@@ -34,13 +35,12 @@ export default async function handler(req: any, res: any) {
     };
 
     let apiUrl = '';
-    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
     
-    if (useProxy) {
+    if (config.baseUrl && !config.baseUrl.includes('googleapis.com')) {
       const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     }
 
     const fetchOptions: RequestInit = {
@@ -53,14 +53,7 @@ export default async function handler(req: any, res: any) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('API Error:', response.status, errorText);
-      try {
-        const errorJson = JSON.parse(errorText);
-        const msg = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
-        return res.status(500).json({ error: msg });
-      } catch {
-        return res.status(500).json({ error: errorText });
-      }
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
@@ -69,10 +62,10 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ text: result.candidates[0].content.parts[0].text });
     }
     
-    return res.status(500).json({ error: 'Invalid API response', details: result });
+    return res.status(500).json({ error: 'Invalid response', details: result });
 
   } catch (error: any) {
     console.error('AI Assistant error:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 }

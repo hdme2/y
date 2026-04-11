@@ -28,15 +28,14 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
-    const { file, mimeType, text } = req.body;
+    const mimeType = req.body.mimeType;
+    const text = req.body.text;
+    const file = req.body.file;
     
-    let contentsParts: any[] = [];
+    let content: any = { role: 'user', parts: [] };
 
-    // Handle text input
     if (text) {
-      contentsParts.push({
-        text: `Here is the data from a quote document (text format):\n\n${text}`
-      });
+      content.parts.push({ text: text });
     } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
@@ -44,34 +43,30 @@ export default async function handler(req: any, res: any) {
       
       const fileBuffer = Buffer.from(file, 'base64');
 
-      // Handle Excel files
-      if (
-        mimeType?.includes('spreadsheet') ||
-        mimeType?.includes('excel') ||
-        mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      ) {
+      const isExcel = mimeType?.includes('spreadsheet') || 
+                      mimeType?.includes('excel') || 
+                      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                      mimeType === 'application/vnd.ms-excel';
+      
+      if (isExcel) {
         try {
           const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
           const sheetNames = workbook.SheetNames;
           let allCsvData = '';
           
-          // 讀取所有工作表
           for (const sheetName of sheetNames) {
             const csvData = xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-            allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
+            allCsvData += `Sheet: ${sheetName}\n${csvData}\n\n`;
           }
           
-          contentsParts.push({
-            text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}`
-          });
-        } catch (e) {
-          mimeType = 'image/png';
+          content.parts.push({ text: `Data:\n${allCsvData.substring(0, 80000)}` });
+        } catch (e: any) {
+          console.error('Excel error:', e.message);
+          return res.status(500).json({ error: `Excel解析失败: ${e.message}` });
         }
-      }
-
-      if (contentsParts.length === 0) {
+      } else {
         const base64Data = fileBuffer.toString('base64');
-        contentsParts.push({
+        content.parts.push({
           inlineData: {
             data: base64Data,
             mimeType: mimeType || 'image/png',
@@ -82,40 +77,28 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    contentsParts.push({
-      text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
-      Return a JSON array of objects. Each object MUST have these fields:
-      - barcode (string, the EAN/UPC barcode, prioritize this)
-      - name (string, product name)
-      - size (string, e.g., '100ml')
-      - spec (string, e.g., 'EDP', 'EDT')
-      - price (number)
-      - currency (string, e.g., 'USD', 'EUR', 'HKD', 'RMB')
-      - moq (number)
-      - status (string, e.g., '現貨', '期貨', '途中', '預訂')
-      - batchNumber (string, if available)
-      - supplier (string, infer from document header if available)
-      - date (string, YYYY-MM-DD, infer from document if available)
-      `,
+    content.parts.push({
+      text: `Extract ALL products. Return ONLY JSON array.
+Fields: barcode, name, size, spec, price, currency, moq, status, supplier
+Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100,"currency":"HKD","moq":10,"status":"現貨","supplier":"YJQ"}]`
     });
 
-    const requestBody = {
-      contents: [{ parts: contentsParts }],
+    const requestBody: any = {
+      contents: [content],
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
       }
     };
 
-    // 构建 API URL
     let apiUrl = '';
-    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
+    const modelName = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
     
-    if (useProxy) {
+    if (config.baseUrl && !config.baseUrl.includes('googleapis.com')) {
       const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     }
 
     const fetchOptions: RequestInit = {
@@ -124,34 +107,29 @@ export default async function handler(req: any, res: any) {
       body: JSON.stringify(requestBody)
     };
 
-    console.log('API URL:', apiUrl.replace(config.apiKey, '***'));
-    console.log('Use proxy:', useProxy);
-
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('API Error:', response.status, errorText);
-      try {
-        const errorJson = JSON.parse(errorText);
-        const msg = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
-        return res.status(500).json({ error: msg });
-      } catch {
-        return res.status(500).json({ error: errorText });
-      }
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
     
     if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
-      const parsedData = JSON.parse(result.candidates[0].content.parts[0].text);
-      return res.status(200).json(parsedData);
+      const text = result.candidates[0].content.parts[0].text;
+      try {
+        const parsedData = JSON.parse(text);
+        return res.status(200).json(parsedData);
+      } catch (e) {
+        return res.status(500).json({ error: 'JSON解析失败', raw: text.substring(0, 500) });
+      }
     }
     
-    return res.status(500).json({ error: 'Invalid API response', details: result });
+    return res.status(500).json({ error: 'Invalid response', details: result });
 
   } catch (error: any) {
-    console.error('Error parsing quote:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
