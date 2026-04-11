@@ -21,6 +21,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const { message } = req.body;
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
     const requestBody = {
       contents: [{ parts: [{ text: message }] }],
@@ -35,7 +36,6 @@ export default async function handler(req: any, res: any) {
 
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    const modelName = process.env.GEMINI_MODEL || 'gemma-4-31b-it';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');

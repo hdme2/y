@@ -94,17 +94,22 @@ Return a JSON array of objects. Each object MUST have these fields:
 Return ONLY the JSON array, no additional text.`
     });
 
-    const requestBody = {
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+    const isGemma = modelName.toLowerCase().includes('gemma');
+    
+    const requestBody: any = {
       contents: [content],
       generationConfig: {
-        responseMimeType: 'application/json',
         temperature: 0.1,
       }
     };
+    
+    if (!isGemma) {
+      requestBody.generationConfig.responseMimeType = 'application/json';
+    }
 
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    const modelName = process.env.GEMINI_MODEL || 'gemma-4-31b-it';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
@@ -139,8 +144,19 @@ Return ONLY the JSON array, no additional text.`
     const result = await response.json();
     
     if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
-      const parsedData = JSON.parse(result.candidates[0].content.parts[0].text);
-      return res.status(200).json(parsedData);
+      const text = result.candidates[0].content.parts[0].text;
+      try {
+        const parsedData = JSON.parse(text);
+        return res.status(200).json(parsedData);
+      } catch {
+        const jsonMatch = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            return res.status(200).json(JSON.parse(jsonMatch[0]));
+          } catch {}
+        }
+        return res.status(500).json({ error: 'Failed to parse JSON from response', text: text.substring(0, 500) });
+      }
     }
     
     return res.status(500).json({ error: 'Invalid API response', details: result });
