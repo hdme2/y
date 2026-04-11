@@ -27,12 +27,12 @@ function extractJson(text: string): string {
     const codeMatch = jsonStr.match(/```\s*([\s\S]*?)```/);
     if (codeMatch) {
       jsonStr = codeMatch[1].trim();
+    } else {
+      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        jsonStr = arrayMatch[0];
+      }
     }
-  }
-  
-  const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    jsonStr = arrayMatch[0];
   }
   
   return jsonStr;
@@ -144,7 +144,7 @@ Required fields:
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      return res.status(500).json({ error: `API Error ${response.status}: ${errorText}` });
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
@@ -157,10 +157,11 @@ Required fields:
         const parsedData = JSON.parse(jsonStr);
         return res.status(200).json(parsedData);
       } catch (e) {
-        console.error('JSON parse error:', e);
+        console.error('JSON parse failed. Extracted:', jsonStr.substring(0, 200));
+        console.error('Original:', responseText.substring(0, 200));
         return res.status(500).json({ 
-          error: 'Failed to parse JSON',
-          raw: responseText.substring(0, 500)
+          error: 'Failed to parse JSON from model response',
+          raw: responseText.substring(0, 2000)
         });
       }
     }
