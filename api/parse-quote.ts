@@ -142,7 +142,7 @@ Required fields:
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
+      return res.status(500).json({ error: `API Error ${response.status}: ${errorText}` });
     }
 
     const result = await response.json();
@@ -155,10 +155,10 @@ Required fields:
         const parsedData = JSON.parse(jsonStr);
         return res.status(200).json(parsedData);
       } catch (e) {
-        console.error('JSON parse failed:', e);
+        console.error('JSON parse failed');
+        console.error('Raw response:', responseText);
         return res.status(500).json({ 
-          error: 'Failed to parse JSON from model response',
-          raw: responseText.substring(0, 2000)
+          error: `JSON解析失败。原始响应: ${responseText.substring(0, 1000)}`
         });
       }
     }
