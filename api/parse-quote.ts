@@ -17,39 +17,38 @@ export const config = {
   },
 };
 
-// Robust JSON extractor
-function extractJson(text: string): any | null {
-  // Step 1: Remove thinking tags completely
+function cleanResponse(text: string): string {
+  // Remove thinking tags: <think>...</think>
   let cleaned = text
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think>[\s\S]*$/gi, '')
+    .replace(/<strip思考>[\s\S]*?<\/strip思考>/gi, '')
     .trim();
+  return cleaned;
+}
+
+function extractJson(text: string): any | null {
+  const cleaned = cleanResponse(text);
   
-  // Step 2: Find JSON array or object
+  // Find JSON array or object
   const jsonPattern = /(\[[\s\S]*\]|\{[\s\S]*\})/;
   const match = cleaned.match(jsonPattern);
   
   if (!match) {
-    console.log('No JSON pattern found in response');
+    console.log('No JSON found');
     return null;
   }
   
   let jsonStr = match[1];
   
-  // Step 3: Try to parse
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // Step 4: Try to fix common issues
+    // Try fixing
+    jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
     try {
-      // Remove trailing commas
-      jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
-      // Remove control characters
-      jsonStr = jsonStr.replace(/[\x00-\x1F\x7F]/g, '');
       return JSON.parse(jsonStr);
     } catch (e2) {
-      console.log('Failed to parse JSON after cleanup');
-      console.log('JSON snippet:', jsonStr.substring(0, 200));
+      console.log('Parse failed:', jsonStr.substring(0, 100));
       return null;
     }
   }
@@ -72,19 +71,15 @@ export default async function handler(req: any, res: any) {
     
     let contentParts: any[] = [];
 
-    // Handle text input
     if (text) {
       contentParts.push({ type: 'text', text: text });
-    }
-    // Handle file input
-    else if (file) {
+    } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
       }
       
       const fileBuffer = Buffer.from(file, 'base64');
       
-      // Check if Excel
       const isExcel = mimeType?.includes('spreadsheet') || 
                       mimeType?.includes('excel') || 
                       mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
@@ -98,23 +93,18 @@ export default async function handler(req: any, res: any) {
           
           for (const sheetName of sheetNames) {
             const csvData = xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-            allCsvData += `=== Sheet: ${sheetName} ===\n${csvData}\n\n`;
+            allCsvData += `Sheet: ${sheetName}\n${csvData}\n\n`;
           }
           
           contentParts.push({ 
             type: 'text', 
-            text: `Here is spreadsheet data in CSV format:\n\n${allCsvData.substring(0, 80000)}` 
+            text: `Data:\n${allCsvData.substring(0, 80000)}` 
           });
         } catch (e: any) {
-          console.error('Excel parse error:', e);
-          // If Excel fails, try as text
-          contentParts.push({ 
-            type: 'text', 
-            text: `File data (base64): ${file.substring(0, 1000)}...` 
-          });
+          console.error('Excel error:', e.message);
+          return res.status(500).json({ error: `Excel解析失败: ${e.message}` });
         }
       } else {
-        // Image or PDF - send as base64
         const base64Data = fileBuffer.toString('base64');
         contentParts.push({
           type: 'image_url',
@@ -127,14 +117,11 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    // Add extraction prompt
     contentParts.push({
       type: 'text',
-      text: `Extract ALL product rows from this document. Return ONLY a JSON array.
-Do NOT include any text before or after the JSON. Do NOT use markdown. Do NOT include thinking tags.
-Example valid response: [{"barcode":"123","name":"Product"}]
-
-Fields: barcode, name, size, spec, price, currency, moq, status, supplier`
+      text: `Extract ALL products. Return ONLY JSON array. No markdown, no thinking tags.
+Fields: barcode, name, size, spec, price, currency, moq, status, supplier
+Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100,"currency":"HKD","moq":10,"status":"現貨","supplier":"YJQ"}]`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
@@ -158,13 +145,10 @@ Fields: barcode, name, size, spec, price, currency, moq, status, supplier`
       body: JSON.stringify(requestBody)
     };
 
-    console.log('Calling API with model:', modelName);
-
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('API Error:', response.status, errorText);
       return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
@@ -172,23 +156,21 @@ Fields: barcode, name, size, spec, price, currency, moq, status, supplier`
     
     if (result.choices && result.choices[0]?.message?.content) {
       const responseText = result.choices[0].message.content;
-      console.log('Response length:', responseText.length);
-      console.log('Response start:', responseText.substring(0, 200));
+      const cleaned = cleanResponse(responseText);
       
-      const parsed = extractJson(responseText);
+      const parsed = extractJson(cleaned);
       
       if (parsed) {
         return res.status(200).json(parsed);
       }
       
       return res.status(500).json({ 
-        error: 'Failed to parse JSON from response',
-        responseLength: responseText.length,
-        responseStart: responseText.substring(0, 500)
+        error: 'JSON解析失败',
+        cleaned: cleaned.substring(0, 1000)
       });
     }
     
-    return res.status(500).json({ error: 'No content in response', details: result });
+    return res.status(500).json({ error: 'No response content', details: result });
 
   } catch (error: any) {
     console.error('Error:', error);
