@@ -17,6 +17,27 @@ export const config = {
   },
 };
 
+function extractJson(text: string): string {
+  let jsonStr = text.trim();
+  
+  const jsonMatch = jsonStr.match(/```json\s*([\s\S]*?)```/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[1].trim();
+  } else {
+    const codeMatch = jsonStr.match(/```\s*([\s\S]*?)```/);
+    if (codeMatch) {
+      jsonStr = codeMatch[1].trim();
+    }
+  }
+  
+  const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    jsonStr = arrayMatch[0];
+  }
+  
+  return jsonStr;
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -81,20 +102,18 @@ export default async function handler(req: any, res: any) {
     contentParts.push({
       type: 'text',
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
-Return a JSON array of objects. Each object MUST have these fields:
-- barcode (string, the EAN/UPC barcode, prioritize this)
+Return ONLY a valid JSON array, no markdown formatting, no code blocks. Example: [{"barcode":"123","name":"Test"}]
+
+Required fields:
+- barcode (string, EAN/UPC barcode)
 - name (string, product name)
 - size (string, e.g., '100ml')
 - spec (string, e.g., 'EDP', 'EDT')
 - price (number)
-- currency (string, e.g., 'USD', 'EUR', 'HKD', 'RMB')
+- currency (string, e.g., 'HKD', 'USD')
 - moq (number)
-- status (string, e.g., '現貨', '期貨', '途中', '預訂')
-- batchNumber (string, if available)
-- supplier (string, infer from document header if available)
-- date (string, YYYY-MM-DD, infer from document if available)
-
-IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"123","name":"Test"}]`
+- status (string, e.g., '現貨', '期貨')
+- supplier (string, from document header if available)`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
@@ -132,13 +151,16 @@ IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"1
     
     if (result.choices && result.choices[0]?.message?.content) {
       const responseText = result.choices[0].message.content;
+      const jsonStr = extractJson(responseText);
       
       try {
-        const parsedData = JSON.parse(responseText);
+        const parsedData = JSON.parse(jsonStr);
         return res.status(200).json(parsedData);
-      } catch {
+      } catch (e) {
+        console.error('JSON parse error:', e);
         return res.status(500).json({ 
-          error: `Model returned invalid JSON: ${responseText.substring(0, 500)}`
+          error: 'Failed to parse JSON',
+          raw: responseText.substring(0, 500)
         });
       }
     }
