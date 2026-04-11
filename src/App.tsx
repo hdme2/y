@@ -5,6 +5,7 @@ import UploadQuote from './pages/UploadQuote';
 import Products from './pages/Products';
 import QuoteGenerator from './pages/QuoteGenerator';
 import SettingsPage from './pages/Settings';
+import PasswordOverlay from './components/PasswordOverlay';
 
 function Sidebar() {
   const location = useLocation();
@@ -47,20 +48,22 @@ function Sidebar() {
 
 export default function App() {
   return (
-    <Router>
-      <div className="flex h-screen bg-gray-50 font-sans">
-        <Sidebar />
-        <main className="flex-1 overflow-auto p-8">
-          <Routes>
-            <Route path="/" element={<Navigate to="/upload" replace />} />
-            <Route path="/upload" element={<UploadQuote />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/quote" element={<QuoteGenerator />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/upload" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </Router>
+    <PasswordOverlay>
+      <Router>
+        <div className="flex h-screen bg-gray-50 font-sans">
+          <Sidebar />
+          <main className="flex-1 overflow-auto p-8">
+            <Routes>
+              <Route path="/" element={<Navigate to="/upload" replace />} />
+              <Route path="/upload" element={<UploadQuote />} />
+              <Route path="/products" element={<Products />} />
+              <Route path="/quote" element={<QuoteGenerator />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/upload" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </Router>
+    </PasswordOverlay>
   );
 }
