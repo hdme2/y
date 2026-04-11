@@ -20,26 +20,40 @@ export const config = {
 function extractJson(text: string): string {
   let jsonStr = text.trim();
   
-  // Remove thinking tags like <think>...</think>
+  // Remove thinking tags like <think>...</think> or just <think> without closing tag
   jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, '');
   
-  // Remove markdown code blocks
-  const jsonMatch = jsonStr.match(/```json\s*([\s\S]*?)```/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim();
-  } else {
-    const codeMatch = jsonStr.match(/```\s*([\s\S]*?)```/);
-    if (codeMatch) {
-      jsonStr = codeMatch[1].trim();
-    } else {
-      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        jsonStr = arrayMatch[0];
-      }
-    }
+  // Also remove any remaining thinking content before first JSON character
+  const firstBracket = jsonStr.search(/[\[{]/);
+  if (firstBracket > 0) {
+    jsonStr = jsonStr.substring(firstBracket);
+  }
+  
+  // Try to extract JSON array or object
+  const match = jsonStr.match(/^(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (match) {
+    jsonStr = match[1];
   }
   
   return jsonStr;
+}
+
+function findJsonInText(text: string): any {
+  // Try to find and parse JSON array or object anywhere in text
+  const bracketMatch = text.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (bracketMatch) {
+    try {
+      return JSON.parse(bracketMatch[1]);
+    } catch (e) {
+      // Try to fix common issues
+      try {
+        // Remove trailing commas
+        const fixed = bracketMatch[1].replace(/,(\s*[\]}])/g, '$1');
+        return JSON.parse(fixed);
+      } catch (e2) {}
+    }
+  }
+  return null;
 }
 
 export default async function handler(req: any, res: any) {
@@ -106,7 +120,7 @@ export default async function handler(req: any, res: any) {
     contentParts.push({
       type: 'text',
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
-Return ONLY a valid JSON array, no markdown formatting, no code blocks, no thinking tags. Example: [{"barcode":"123","name":"Test"}]
+IMPORTANT: Return ONLY a valid JSON array, no markdown, no code blocks, no thinking tags. Example: [{"barcode":"123","name":"Test"}]
 
 Required fields:
 - barcode (string, EAN/UPC barcode)
@@ -153,16 +167,23 @@ Required fields:
     
     if (result.choices && result.choices[0]?.message?.content) {
       const responseText = result.choices[0].message.content;
-      const jsonStr = extractJson(responseText);
       
+      // Try to extract and parse JSON
+      const jsonStr = extractJson(responseText);
       try {
         const parsedData = JSON.parse(jsonStr);
         return res.status(200).json(parsedData);
       } catch (e) {
+        // Try to find JSON anywhere in text
+        const found = findJsonInText(responseText);
+        if (found) {
+          return res.status(200).json(found);
+        }
         console.error('JSON parse failed');
-        console.error('Cleaned content:', jsonStr.substring(0, 500));
+        console.error('Cleaned:', jsonStr.substring(0, 300));
         return res.status(500).json({ 
-          error: `JSON解析失败。内容: ${jsonStr.substring(0, 500)}`
+          error: `JSON解析失败`,
+          raw: responseText.substring(0, 500)
         });
       }
     }
