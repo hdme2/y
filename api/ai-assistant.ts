@@ -1,6 +1,6 @@
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.VITE_BASE_URL || 'https://openrouter.ai/api/v1';
+  const baseUrl = process.env.VITE_BASE_URL || 'https://api.minimaxi.com/v1';
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -21,7 +21,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const { message } = req.body;
-    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL || 'MiniMax-M2.7';
 
     const messages = [
       {
@@ -48,27 +48,16 @@ export default async function handler(req: any, res: any) {
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`,
-        'HTTP-Referer': 'https://y-theta-brown.vercel.app',
-        'X-Title': 'Perfume Quote Parser'
       },
       body: JSON.stringify(requestBody)
     };
-
-    console.log('API URL:', apiUrl);
-    console.log('Model:', modelName);
 
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      try {
-        const errorJson = JSON.parse(errorText);
-        const msg = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
-        return res.status(500).json({ error: msg });
-      } catch {
-        return res.status(500).json({ error: errorText });
-      }
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
@@ -81,6 +70,6 @@ export default async function handler(req: any, res: any) {
 
   } catch (error: any) {
     console.error('AI Assistant error:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 }

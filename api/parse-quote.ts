@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx';
 
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.VITE_BASE_URL || 'https://openrouter.ai/api/v1';
+  const baseUrl = process.env.VITE_BASE_URL || 'https://api.minimaxi.com/v1';
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -117,7 +117,7 @@ Required fields:
     });
 
     const messages = [{ role: 'user', content: contentParts }];
-    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'MiniMax-M2.7';
     
     const requestBody: any = {
       model: modelName,
@@ -133,8 +133,6 @@ Required fields:
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`,
-        'HTTP-Referer': 'https://y-theta-brown.vercel.app',
-        'X-Title': 'Perfume Quote Parser'
       },
       body: JSON.stringify(requestBody)
     };
@@ -157,8 +155,7 @@ Required fields:
         const parsedData = JSON.parse(jsonStr);
         return res.status(200).json(parsedData);
       } catch (e) {
-        console.error('JSON parse failed. Extracted:', jsonStr.substring(0, 200));
-        console.error('Original:', responseText.substring(0, 200));
+        console.error('JSON parse failed:', e);
         return res.status(500).json({ 
           error: 'Failed to parse JSON from model response',
           raw: responseText.substring(0, 2000)
