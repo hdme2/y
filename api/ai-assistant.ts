@@ -1,6 +1,6 @@
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.VITE_BASE_URL || process.env.GEMINI_BASE_URL;
+  const baseUrl = process.env.VITE_BASE_URL || 'https://openrouter.ai/api/v1';
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -21,34 +21,41 @@ export default async function handler(req: any, res: any) {
     }
 
     const { message } = req.body;
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.0-flash';
+
+    const messages = [
+      {
+        role: 'system',
+        content: '你是香港香水批發中間商的專業 AI 決策助手。請根據市場趨勢、庫存、利潤等提供專業的採購與銷售建議。使用繁體中文，語氣專業且具備商業洞察力。'
+      },
+      {
+        role: 'user',
+        content: message
+      }
+    ];
 
     const requestBody = {
-      contents: [{ parts: [{ text: message }] }],
-      systemInstruction: {
-        parts: [{ text: '你是香港香水批發中間商的專業 AI 決策助手。請根據市場趨勢、庫存、利潤等提供專業的採購與銷售建議。使用繁體中文，語氣專業且具備商業洞察力。' }]
-      },
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      }
+      model: modelName,
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 2048,
     };
 
-    let apiUrl = '';
-    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    
-    if (useProxy) {
-      const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
-    } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
-    }
+    const apiUrl = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+        'HTTP-Referer': 'https://y-theta-brown.vercel.app',
+        'X-Title': 'Perfume Quote Parser'
+      },
       body: JSON.stringify(requestBody)
     };
+
+    console.log('API URL:', apiUrl);
+    console.log('Model:', modelName);
 
     const response = await fetch(apiUrl, fetchOptions);
 
@@ -66,8 +73,8 @@ export default async function handler(req: any, res: any) {
 
     const result = await response.json();
     
-    if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
-      return res.status(200).json({ text: result.candidates[0].content.parts[0].text });
+    if (result.choices && result.choices[0]?.message?.content) {
+      return res.status(200).json({ text: result.choices[0].message.content });
     }
     
     return res.status(500).json({ error: 'Invalid API response', details: result });

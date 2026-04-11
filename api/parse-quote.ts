@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx';
 
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.VITE_BASE_URL || process.env.GEMINI_BASE_URL;
+  const baseUrl = process.env.VITE_BASE_URL || 'https://openrouter.ai/api/v1';
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -32,10 +32,10 @@ export default async function handler(req: any, res: any) {
     const text = req.body.text;
     const file = req.body.file;
     
-    let content: any = { role: 'user', parts: [] };
+    let contentParts: any[] = [];
 
     if (text) {
-      content.parts.push({ text: `Here is the data from a quote document (text format):\n\n${text}` });
+      contentParts.push({ type: 'text', text: `Here is the data from a quote document (text format):\n\n${text}` });
     } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
@@ -58,25 +58,27 @@ export default async function handler(req: any, res: any) {
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          content.parts.push({ text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}` });
+          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}` });
         } catch (e) {
         }
       }
 
-      if (content.parts.length === 0) {
+      if (contentParts.length === 0) {
         const base64Data = fileBuffer.toString('base64');
-        content.parts.push({
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType || 'image/png',
-          },
+        const imageMimeType = mimeType?.includes('pdf') ? 'application/pdf' : (mimeType || 'image/png');
+        contentParts.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${imageMimeType};base64,${base64Data}`
+          }
         });
       }
     } else {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    content.parts.push({
+    contentParts.push({
+      type: 'text',
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
 Return a JSON array of objects. Each object MUST have these fields:
 - barcode (string, the EAN/UPC barcode, prioritize this)
@@ -94,37 +96,30 @@ Return a JSON array of objects. Each object MUST have these fields:
 Return ONLY the JSON array, no additional text.`
     });
 
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-    const isGemma = modelName.toLowerCase().includes('gemma');
+    const messages = [{ role: 'user', content: contentParts }];
+    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.0-flash';
     
     const requestBody: any = {
-      contents: [content],
-      generationConfig: {
-        temperature: 0.1,
-      }
+      model: modelName,
+      messages: messages,
+      temperature: 0.1,
+      max_tokens: 4096,
     };
-    
-    if (!isGemma) {
-      requestBody.generationConfig.responseMimeType = 'application/json';
-    }
 
-    let apiUrl = '';
-    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    
-    if (useProxy) {
-      const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
-    } else {
-      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
-    }
+    const apiUrl = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+        'HTTP-Referer': 'https://y-theta-brown.vercel.app',
+        'X-Title': 'Perfume Quote Parser'
+      },
       body: JSON.stringify(requestBody)
     };
 
-    console.log('API URL:', apiUrl.replace(config.apiKey, '***'));
+    console.log('API URL:', apiUrl);
     console.log('Model:', modelName);
 
     const response = await fetch(apiUrl, fetchOptions);
@@ -143,8 +138,8 @@ Return ONLY the JSON array, no additional text.`
 
     const result = await response.json();
     
-    if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
-      const text = result.candidates[0].content.parts[0].text;
+    if (result.choices && result.choices[0]?.message?.content) {
+      const text = result.choices[0].message.content;
       try {
         const parsedData = JSON.parse(text);
         return res.status(200).json(parsedData);
@@ -155,7 +150,7 @@ Return ONLY the JSON array, no additional text.`
             return res.status(200).json(JSON.parse(jsonMatch[0]));
           } catch {}
         }
-        return res.status(500).json({ error: 'Failed to parse JSON from response', text: text.substring(0, 500) });
+        return res.status(500).json({ error: 'Failed to parse JSON', text: text.substring(0, 500) });
       }
     }
     
