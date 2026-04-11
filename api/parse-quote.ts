@@ -20,6 +20,10 @@ export const config = {
 function extractJson(text: string): string {
   let jsonStr = text.trim();
   
+  // Remove thinking tags like <think>...</think>
+  jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  
+  // Remove markdown code blocks
   const jsonMatch = jsonStr.match(/```json\s*([\s\S]*?)```/);
   if (jsonMatch) {
     jsonStr = jsonMatch[1].trim();
@@ -102,7 +106,7 @@ export default async function handler(req: any, res: any) {
     contentParts.push({
       type: 'text',
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
-Return ONLY a valid JSON array, no markdown formatting, no code blocks. Example: [{"barcode":"123","name":"Test"}]
+Return ONLY a valid JSON array, no markdown formatting, no code blocks, no thinking tags. Example: [{"barcode":"123","name":"Test"}]
 
 Required fields:
 - barcode (string, EAN/UPC barcode)
@@ -156,9 +160,9 @@ Required fields:
         return res.status(200).json(parsedData);
       } catch (e) {
         console.error('JSON parse failed');
-        console.error('Raw response:', responseText);
+        console.error('Cleaned content:', jsonStr.substring(0, 500));
         return res.status(500).json({ 
-          error: `JSON解析失败。原始响应: ${responseText.substring(0, 1000)}`
+          error: `JSON解析失败。内容: ${jsonStr.substring(0, 500)}`
         });
       }
     }
