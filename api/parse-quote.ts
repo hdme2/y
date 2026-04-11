@@ -33,6 +33,7 @@ export default async function handler(req: any, res: any) {
     const file = req.body.file;
     
     let contentParts: any[] = [];
+    let fileText = '';
 
     if (text) {
       contentParts.push({ type: 'text', text: `Here is the data from a quote document (text format):\n\n${text}` });
@@ -43,11 +44,14 @@ export default async function handler(req: any, res: any) {
       
       const fileBuffer = Buffer.from(file, 'base64');
 
-      if (
-        mimeType?.includes('spreadsheet') ||
-        mimeType?.includes('excel') ||
-        mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      ) {
+      const isExcel = mimeType?.includes('spreadsheet') || 
+                      mimeType?.includes('excel') || 
+                      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                      mimeType === 'application/vnd.ms-excel';
+      
+      const isPDF = mimeType?.includes('pdf');
+
+      if (isExcel) {
         try {
           const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
           const sheetNames = workbook.SheetNames;
@@ -58,18 +62,20 @@ export default async function handler(req: any, res: any) {
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}` });
+          fileText = allCsvData.substring(0, 50000);
+          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${fileText}` });
         } catch (e) {
+          console.error('Excel parsing failed:', e);
+          contentParts.push({ type: 'text', text: 'Failed to parse Excel file. Please convert to image or use a different format.' });
         }
-      }
-
-      if (contentParts.length === 0) {
+      } else if (isPDF) {
+        contentParts.push({ type: 'text', text: 'PDF parsing not fully supported. Please convert PDF to image for better results.' });
+      } else {
         const base64Data = fileBuffer.toString('base64');
-        const imageMimeType = mimeType?.includes('pdf') ? 'application/pdf' : (mimeType || 'image/png');
         contentParts.push({
           type: 'image_url',
           image_url: {
-            url: `data:${imageMimeType};base64,${base64Data}`
+            url: `data:${mimeType};base64,${base64Data}`
           }
         });
       }
@@ -97,7 +103,7 @@ Return ONLY the JSON array, no additional text.`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
-    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL || 'google/gemini-2.5-flash';
     
     const requestBody: any = {
       model: modelName,
@@ -121,6 +127,8 @@ Return ONLY the JSON array, no additional text.`
 
     console.log('API URL:', apiUrl);
     console.log('Model:', modelName);
+    console.log('File type:', mimeType);
+    console.log('Content parts count:', contentParts.length);
 
     const response = await fetch(apiUrl, fetchOptions);
 
@@ -140,17 +148,24 @@ Return ONLY the JSON array, no additional text.`
     
     if (result.choices && result.choices[0]?.message?.content) {
       const text = result.choices[0].message.content;
+      console.log('Raw response:', text.substring(0, 500));
       try {
         const parsedData = JSON.parse(text);
         return res.status(200).json(parsedData);
       } catch {
-        const jsonMatch = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           try {
             return res.status(200).json(JSON.parse(jsonMatch[0]));
           } catch {}
         }
-        return res.status(500).json({ error: 'Failed to parse JSON', text: text.substring(0, 500) });
+        const objMatch = text.match(/\{[\s\S]*\}/);
+        if (objMatch) {
+          try {
+            return res.status(200).json(JSON.parse(objMatch[0]));
+          } catch {}
+        }
+        return res.status(500).json({ error: 'Failed to parse JSON from response', raw: text.substring(0, 1000) });
       }
     }
     
