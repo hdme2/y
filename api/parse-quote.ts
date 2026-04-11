@@ -18,7 +18,7 @@ export const config = {
 };
 
 function extractJson(text: string): string {
-  // Remove thinking tags completely
+  // Remove thinking tags
   let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
   
   // Find the first [ or { and take from there
@@ -34,18 +34,15 @@ function extractJson(text: string): string {
 function tryParseJson(text: string): any {
   const cleaned = extractJson(text);
   
-  // Try direct parse
   try {
     return JSON.parse(cleaned);
   } catch (e) {}
   
-  // Try to find JSON array or object
   const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
   if (match) {
     try {
       return JSON.parse(match[1]);
     } catch (e) {
-      // Try fixing trailing commas
       try {
         const fixed = match[1].replace(/,(\s*[\]}])/g, '$1');
         return JSON.parse(fixed);
@@ -100,9 +97,9 @@ export default async function handler(req: any, res: any) {
           
           const csvText = allCsvData.substring(0, 50000);
           contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${csvText}` });
-        } catch (e) {
+        } catch (e: any) {
           console.error('Excel parsing error:', e);
-          return res.status(500).json({ error: 'Failed to parse Excel file. Please convert to image format.' });
+          return res.status(500).json({ error: `Excel解析失败: ${e.message}` });
         }
       } else {
         const base64Data = fileBuffer.toString('base64');
@@ -119,7 +116,7 @@ export default async function handler(req: any, res: any) {
 
     contentParts.push({
       type: 'text',
-      text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
+      text: `You are an expert perfume wholesale data extractor. Extract ALL product rows from this quote document. Do not skip any products.
 IMPORTANT: Return ONLY a valid JSON array, no markdown, no code blocks, no thinking tags. Example: [{"barcode":"123","name":"Test"}]
 
 Required fields:
@@ -131,7 +128,9 @@ Required fields:
 - currency (string, e.g., 'HKD', 'USD')
 - moq (number)
 - status (string, e.g., '現貨', '期貨')
-- supplier (string, from document header if available)`
+- supplier (string, from document header if available)
+
+IMPORTANT: Extract ALL products, do not stop early. Return the complete JSON array.`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
@@ -141,7 +140,7 @@ Required fields:
       model: modelName,
       messages: messages,
       temperature: 0.1,
-      max_tokens: 4096,
+      max_tokens: 8192,
     };
 
     const apiUrl = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
@@ -173,11 +172,11 @@ Required fields:
         return res.status(200).json(parsed);
       }
       
-      // If still fails, show what we got
+      // If still fails, show cleaned content
       const cleaned = extractJson(responseText);
       return res.status(500).json({ 
         error: `JSON解析失败`,
-        cleaned: cleaned.substring(0, 500)
+        cleaned: cleaned.substring(0, 1000)
       });
     }
     
