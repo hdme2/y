@@ -33,7 +33,6 @@ export default async function handler(req: any, res: any) {
     const file = req.body.file;
     
     let contentParts: any[] = [];
-    let fileText = '';
 
     if (text) {
       contentParts.push({ type: 'text', text: `Here is the data from a quote document (text format):\n\n${text}` });
@@ -49,8 +48,6 @@ export default async function handler(req: any, res: any) {
                       mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
                       mimeType === 'application/vnd.ms-excel';
       
-      const isPDF = mimeType?.includes('pdf');
-
       if (isExcel) {
         try {
           const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
@@ -62,14 +59,12 @@ export default async function handler(req: any, res: any) {
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          fileText = allCsvData.substring(0, 50000);
-          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${fileText}` });
+          const csvText = allCsvData.substring(0, 50000);
+          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${csvText}` });
         } catch (e) {
-          console.error('Excel parsing failed:', e);
-          contentParts.push({ type: 'text', text: 'Failed to parse Excel file. Please convert to image or use a different format.' });
+          console.error('Excel parsing error:', e);
+          return res.status(500).json({ error: 'Failed to parse Excel file. Please convert to image format.' });
         }
-      } else if (isPDF) {
-        contentParts.push({ type: 'text', text: 'PDF parsing not fully supported. Please convert PDF to image for better results.' });
       } else {
         const base64Data = fileBuffer.toString('base64');
         contentParts.push({
@@ -99,7 +94,7 @@ Return a JSON array of objects. Each object MUST have these fields:
 - supplier (string, infer from document header if available)
 - date (string, YYYY-MM-DD, infer from document if available)
 
-Return ONLY the JSON array, no additional text.`
+IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"123","name":"Test"}]`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
@@ -125,54 +120,34 @@ Return ONLY the JSON array, no additional text.`
       body: JSON.stringify(requestBody)
     };
 
-    console.log('API URL:', apiUrl);
-    console.log('Model:', modelName);
-    console.log('File type:', mimeType);
-    console.log('Content parts count:', contentParts.length);
-
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      try {
-        const errorJson = JSON.parse(errorText);
-        const msg = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
-        return res.status(500).json({ error: msg });
-      } catch {
-        return res.status(500).json({ error: errorText });
-      }
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
     
     if (result.choices && result.choices[0]?.message?.content) {
-      const text = result.choices[0].message.content;
-      console.log('Raw response:', text.substring(0, 500));
+      const responseText = result.choices[0].message.content;
+      
       try {
-        const parsedData = JSON.parse(text);
+        const parsedData = JSON.parse(responseText);
         return res.status(200).json(parsedData);
       } catch {
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          try {
-            return res.status(200).json(JSON.parse(jsonMatch[0]));
-          } catch {}
-        }
-        const objMatch = text.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          try {
-            return res.status(200).json(JSON.parse(objMatch[0]));
-          } catch {}
-        }
-        return res.status(500).json({ error: 'Failed to parse JSON from response', raw: text.substring(0, 1000) });
+        return res.status(500).json({ 
+          error: 'Model returned invalid JSON',
+          raw: responseText
+        });
       }
     }
     
     return res.status(500).json({ error: 'Invalid API response', details: result });
 
   } catch (error: any) {
-    console.error('Error parsing quote:', error);
+    console.error('Error:', error);
     res.status(500).json({ error: error.message });
   }
 }
