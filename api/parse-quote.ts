@@ -1,8 +1,8 @@
 import * as xlsx from 'xlsx';
 
 function getConfig() {
-  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+  const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
+  const baseUrl = process.env.VITE_BASE_URL || process.env.GEMINI_BASE_URL;
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -25,21 +25,17 @@ export default async function handler(req: any, res: any) {
   try {
     const config = getConfig();
     if (!config) {
-      return res.status(500).json({ error: 'DEEPSEEK_API_KEY environment variable is required' });
+      return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
     const mimeType = req.body.mimeType;
     const text = req.body.text;
     const file = req.body.file;
     
-    const messages: any[] = [];
-    let contentParts: any[] = [];
+    let content: any = { role: 'user', parts: [] };
 
     if (text) {
-      contentParts.push({
-        type: 'text',
-        text: `Here is the data from a quote document (text format):\n\n${text}`
-      });
+      content.parts.push({ text: `Here is the data from a quote document (text format):\n\n${text}` });
     } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
@@ -62,30 +58,25 @@ export default async function handler(req: any, res: any) {
             allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          contentParts.push({
-            type: 'text',
-            text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}`
-          });
+          content.parts.push({ text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}` });
         } catch (e) {
         }
       }
 
-      if (contentParts.length === 0) {
+      if (content.parts.length === 0) {
         const base64Data = fileBuffer.toString('base64');
-        const imageMimeType = mimeType?.includes('pdf') ? 'application/pdf' : (mimeType || 'image/png');
-        contentParts.push({
-          type: 'image_url',
-          image_url: {
-            url: `data:${imageMimeType};base64,${base64Data}`
-          }
+        content.parts.push({
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType || 'image/png',
+          },
         });
       }
     } else {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    contentParts.push({
-      type: 'text',
+    content.parts.push({
       text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
 Return a JSON array of objects. Each object MUST have these fields:
 - barcode (string, the EAN/UPC barcode, prioritize this)
@@ -103,36 +94,32 @@ Return a JSON array of objects. Each object MUST have these fields:
 Return ONLY the JSON array, no additional text.`
     });
 
-    messages.push({
-      role: 'user',
-      content: contentParts
-    });
-
-    const modelName = process.env.DEEPSEEK_MODEL || 'deepseek-v4.0';
-    
-    const requestBody: any = {
-      model: modelName,
-      messages: messages,
-      temperature: 0.1,
+    const requestBody = {
+      contents: [content],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      }
     };
 
-    if (modelName.includes('deepseek-v4.0')) {
-      requestBody.max_tokens = 4096;
-      requestBody.response_format = { type: 'json_object' };
+    let apiUrl = '';
+    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    
+    if (useProxy) {
+      const base = config.baseUrl.replace(/\/$/, '');
+      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
+    } else {
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
     }
-
-    const apiUrl = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
     };
 
-    console.log('API URL:', apiUrl);
+    console.log('API URL:', apiUrl.replace(config.apiKey, '***'));
     console.log('Model:', modelName);
 
     const response = await fetch(apiUrl, fetchOptions);
@@ -151,8 +138,8 @@ Return ONLY the JSON array, no additional text.`
 
     const result = await response.json();
     
-    if (result.choices && result.choices[0]?.message?.content) {
-      const parsedData = JSON.parse(result.choices[0].message.content);
+    if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+      const parsedData = JSON.parse(result.candidates[0].content.parts[0].text);
       return res.status(200).json(parsedData);
     }
     
