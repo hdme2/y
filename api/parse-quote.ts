@@ -17,40 +17,42 @@ export const config = {
   },
 };
 
-function extractJson(text: string): string {
-  // Remove thinking tags
-  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+// Robust JSON extractor
+function extractJson(text: string): any | null {
+  // Step 1: Remove thinking tags completely
+  let cleaned = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
+    .trim();
   
-  // Find the first [ or { and take from there
-  const firstBracket = cleaned.match(/[\[{]/);
-  if (firstBracket) {
-    const startIndex = cleaned.indexOf(firstBracket[0]);
-    cleaned = cleaned.substring(startIndex);
+  // Step 2: Find JSON array or object
+  const jsonPattern = /(\[[\s\S]*\]|\{[\s\S]*\})/;
+  const match = cleaned.match(jsonPattern);
+  
+  if (!match) {
+    console.log('No JSON pattern found in response');
+    return null;
   }
   
-  return cleaned.trim();
-}
-
-function tryParseJson(text: string): any {
-  const cleaned = extractJson(text);
+  let jsonStr = match[1];
   
+  // Step 3: Try to parse
   try {
-    return JSON.parse(cleaned);
-  } catch (e) {}
-  
-  const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (match) {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    // Step 4: Try to fix common issues
     try {
-      return JSON.parse(match[1]);
-    } catch (e) {
-      try {
-        const fixed = match[1].replace(/,(\s*[\]}])/g, '$1');
-        return JSON.parse(fixed);
-      } catch (e2) {}
+      // Remove trailing commas
+      jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
+      // Remove control characters
+      jsonStr = jsonStr.replace(/[\x00-\x1F\x7F]/g, '');
+      return JSON.parse(jsonStr);
+    } catch (e2) {
+      console.log('Failed to parse JSON after cleanup');
+      console.log('JSON snippet:', jsonStr.substring(0, 200));
+      return null;
     }
   }
-  
-  return null;
 }
 
 export default async function handler(req: any, res: any) {
@@ -70,15 +72,19 @@ export default async function handler(req: any, res: any) {
     
     let contentParts: any[] = [];
 
+    // Handle text input
     if (text) {
-      contentParts.push({ type: 'text', text: `Here is the data from a quote document (text format):\n\n${text}` });
-    } else if (file) {
+      contentParts.push({ type: 'text', text: text });
+    }
+    // Handle file input
+    else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
       }
       
       const fileBuffer = Buffer.from(file, 'base64');
-
+      
+      // Check if Excel
       const isExcel = mimeType?.includes('spreadsheet') || 
                       mimeType?.includes('excel') || 
                       mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
@@ -92,16 +98,23 @@ export default async function handler(req: any, res: any) {
           
           for (const sheetName of sheetNames) {
             const csvData = xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-            allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
+            allCsvData += `=== Sheet: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          const csvText = allCsvData.substring(0, 50000);
-          contentParts.push({ type: 'text', text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${csvText}` });
+          contentParts.push({ 
+            type: 'text', 
+            text: `Here is spreadsheet data in CSV format:\n\n${allCsvData.substring(0, 80000)}` 
+          });
         } catch (e: any) {
-          console.error('Excel parsing error:', e);
-          return res.status(500).json({ error: `Excel解析失败: ${e.message}` });
+          console.error('Excel parse error:', e);
+          // If Excel fails, try as text
+          contentParts.push({ 
+            type: 'text', 
+            text: `File data (base64): ${file.substring(0, 1000)}...` 
+          });
         }
       } else {
+        // Image or PDF - send as base64
         const base64Data = fileBuffer.toString('base64');
         contentParts.push({
           type: 'image_url',
@@ -114,29 +127,20 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
+    // Add extraction prompt
     contentParts.push({
       type: 'text',
-      text: `You are an expert perfume wholesale data extractor. Extract ALL product rows from this quote document. Do not skip any products.
-IMPORTANT: Return ONLY a valid JSON array, no markdown, no code blocks, no thinking tags. Example: [{"barcode":"123","name":"Test"}]
+      text: `Extract ALL product rows from this document. Return ONLY a JSON array.
+Do NOT include any text before or after the JSON. Do NOT use markdown. Do NOT include thinking tags.
+Example valid response: [{"barcode":"123","name":"Product"}]
 
-Required fields:
-- barcode (string, EAN/UPC barcode)
-- name (string, product name)
-- size (string, e.g., '100ml')
-- spec (string, e.g., 'EDP', 'EDT')
-- price (number)
-- currency (string, e.g., 'HKD', 'USD')
-- moq (number)
-- status (string, e.g., '現貨', '期貨')
-- supplier (string, from document header if available)
-
-IMPORTANT: Extract ALL products, do not stop early. Return the complete JSON array.`
+Fields: barcode, name, size, spec, price, currency, moq, status, supplier`
     });
 
     const messages = [{ role: 'user', content: contentParts }];
     const modelName = process.env.GEMINI_MODEL || 'MiniMax-M2.7';
     
-    const requestBody: any = {
+    const requestBody = {
       model: modelName,
       messages: messages,
       temperature: 0.1,
@@ -154,33 +158,37 @@ IMPORTANT: Extract ALL products, do not stop early. Return the complete JSON arr
       body: JSON.stringify(requestBody)
     };
 
+    console.log('Calling API with model:', modelName);
+
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      return res.status(500).json({ error: `API Error ${response.status}: ${errorText}` });
+      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
     }
 
     const result = await response.json();
     
     if (result.choices && result.choices[0]?.message?.content) {
       const responseText = result.choices[0].message.content;
-      const parsed = tryParseJson(responseText);
+      console.log('Response length:', responseText.length);
+      console.log('Response start:', responseText.substring(0, 200));
+      
+      const parsed = extractJson(responseText);
       
       if (parsed) {
         return res.status(200).json(parsed);
       }
       
-      // If still fails, show cleaned content
-      const cleaned = extractJson(responseText);
       return res.status(500).json({ 
-        error: `JSON解析失败`,
-        cleaned: cleaned.substring(0, 1000)
+        error: 'Failed to parse JSON from response',
+        responseLength: responseText.length,
+        responseStart: responseText.substring(0, 500)
       });
     }
     
-    return res.status(500).json({ error: 'Invalid API response', details: result });
+    return res.status(500).json({ error: 'No content in response', details: result });
 
   } catch (error: any) {
     console.error('Error:', error);
