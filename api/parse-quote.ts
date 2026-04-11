@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx';
 
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
-  const baseUrl = process.env.VITE_BASE_URL || 'https://api.minimaxi.com/v1';
+  const baseUrl = process.env.VITE_BASE_URL || process.env.GEMINI_BASE_URL;
   
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '') {
     return null;
@@ -17,43 +17,6 @@ export const config = {
   },
 };
 
-function cleanResponse(text: string): string {
-  // Remove thinking tags: <think>...</think>
-  let cleaned = text
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<strip思考>[\s\S]*?<\/strip思考>/gi, '')
-    .trim();
-  return cleaned;
-}
-
-function extractJson(text: string): any | null {
-  const cleaned = cleanResponse(text);
-  
-  // Find JSON array or object
-  const jsonPattern = /(\[[\s\S]*\]|\{[\s\S]*\})/;
-  const match = cleaned.match(jsonPattern);
-  
-  if (!match) {
-    console.log('No JSON found');
-    return null;
-  }
-  
-  let jsonStr = match[1];
-  
-  try {
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    // Try fixing
-    jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
-    try {
-      return JSON.parse(jsonStr);
-    } catch (e2) {
-      console.log('Parse failed:', jsonStr.substring(0, 100));
-      return null;
-    }
-  }
-}
-
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -65,115 +28,130 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
-    const mimeType = req.body.mimeType;
-    const text = req.body.text;
-    const file = req.body.file;
+    const { file, mimeType, text } = req.body;
     
-    let contentParts: any[] = [];
+    let contentsParts: any[] = [];
 
+    // Handle text input
     if (text) {
-      contentParts.push({ type: 'text', text: text });
+      contentsParts.push({
+        text: `Here is the data from a quote document (text format):\n\n${text}`
+      });
     } else if (file) {
       if (!mimeType) {
         return res.status(400).json({ error: 'No file or text provided' });
       }
       
       const fileBuffer = Buffer.from(file, 'base64');
-      
-      const isExcel = mimeType?.includes('spreadsheet') || 
-                      mimeType?.includes('excel') || 
-                      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-                      mimeType === 'application/vnd.ms-excel';
-      
-      if (isExcel) {
+
+      // Handle Excel files
+      if (
+        mimeType?.includes('spreadsheet') ||
+        mimeType?.includes('excel') ||
+        mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      ) {
         try {
           const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
           const sheetNames = workbook.SheetNames;
           let allCsvData = '';
           
+          // 讀取所有工作表
           for (const sheetName of sheetNames) {
             const csvData = xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-            allCsvData += `Sheet: ${sheetName}\n${csvData}\n\n`;
+            allCsvData += `=== 工作表: ${sheetName} ===\n${csvData}\n\n`;
           }
           
-          contentParts.push({ 
-            type: 'text', 
-            text: `Data:\n${allCsvData.substring(0, 80000)}` 
+          contentsParts.push({
+            text: `Here is the data from an uploaded spreadsheet with ${sheetNames.length} worksheets (CSV format):\n\n${allCsvData.substring(0, 50000)}`
           });
-        } catch (e: any) {
-          console.error('Excel error:', e.message);
-          return res.status(500).json({ error: `Excel解析失败: ${e.message}` });
+        } catch (e) {
+          mimeType = 'image/png';
         }
-      } else {
+      }
+
+      if (contentsParts.length === 0) {
         const base64Data = fileBuffer.toString('base64');
-        contentParts.push({
-          type: 'image_url',
-          image_url: {
-            url: `data:${mimeType};base64,${base64Data}`
-          }
+        contentsParts.push({
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType || 'image/png',
+          },
         });
       }
     } else {
       return res.status(400).json({ error: 'No file or text provided' });
     }
 
-    contentParts.push({
-      type: 'text',
-      text: `Extract ALL products. Return ONLY JSON array. No markdown, no thinking tags.
-Fields: barcode, name, size, spec, price, currency, moq, status, supplier
-Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100,"currency":"HKD","moq":10,"status":"現貨","supplier":"YJQ"}]`
+    contentsParts.push({
+      text: `You are an expert perfume wholesale data extractor. Extract all product rows from this quote document.
+      Return a JSON array of objects. Each object MUST have these fields:
+      - barcode (string, the EAN/UPC barcode, prioritize this)
+      - name (string, product name)
+      - size (string, e.g., '100ml')
+      - spec (string, e.g., 'EDP', 'EDT')
+      - price (number)
+      - currency (string, e.g., 'USD', 'EUR', 'HKD', 'RMB')
+      - moq (number)
+      - status (string, e.g., '現貨', '期貨', '途中', '預訂')
+      - batchNumber (string, if available)
+      - supplier (string, infer from document header if available)
+      - date (string, YYYY-MM-DD, infer from document if available)
+      `,
     });
 
-    const messages = [{ role: 'user', content: contentParts }];
-    const modelName = process.env.GEMINI_MODEL || 'MiniMax-M2.7';
-    
     const requestBody = {
-      model: modelName,
-      messages: messages,
-      temperature: 0.1,
-      max_tokens: 8192,
+      contents: [{ parts: contentsParts }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      }
     };
 
-    const apiUrl = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
+    // 构建 API URL
+    let apiUrl = '';
+    const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
+    
+    if (useProxy) {
+      const base = config.baseUrl.replace(/\/$/, '');
+      apiUrl = `${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+    } else {
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.apiKey}`;
+    }
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
     };
+
+    console.log('API URL:', apiUrl.replace(config.apiKey, '***'));
+    console.log('Use proxy:', useProxy);
 
     const response = await fetch(apiUrl, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
-      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
+      console.error('API Error:', response.status, errorText);
+      try {
+        const errorJson = JSON.parse(errorText);
+        const msg = errorJson.error?.message || errorJson.message || JSON.stringify(errorJson);
+        return res.status(500).json({ error: msg });
+      } catch {
+        return res.status(500).json({ error: errorText });
+      }
     }
 
     const result = await response.json();
     
-    if (result.choices && result.choices[0]?.message?.content) {
-      const responseText = result.choices[0].message.content;
-      const cleaned = cleanResponse(responseText);
-      
-      const parsed = extractJson(cleaned);
-      
-      if (parsed) {
-        return res.status(200).json(parsed);
-      }
-      
-      return res.status(500).json({ 
-        error: 'JSON解析失败',
-        cleaned: cleaned.substring(0, 1000)
-      });
+    if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+      const parsedData = JSON.parse(result.candidates[0].content.parts[0].text);
+      return res.status(200).json(parsedData);
     }
     
-    return res.status(500).json({ error: 'No response content', details: result });
+    return res.status(500).json({ error: 'Invalid API response', details: result });
 
   } catch (error: any) {
-    console.error('Error:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('Error parsing quote:', error);
+    res.status(500).json({ error: error.message });
   }
 }
