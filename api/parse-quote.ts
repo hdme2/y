@@ -125,7 +125,7 @@ IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"1
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API Error:', response.status, errorText);
-      return res.status(500).json({ error: `API Error ${response.status}`, detail: errorText });
+      return res.status(500).json({ error: `API Error ${response.status}: ${errorText}` });
     }
 
     const result = await response.json();
@@ -138,8 +138,7 @@ IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"1
         return res.status(200).json(parsedData);
       } catch {
         return res.status(500).json({ 
-          error: 'Model returned invalid JSON',
-          raw: responseText
+          error: `Model returned invalid JSON: ${responseText.substring(0, 500)}`
         });
       }
     }
@@ -148,6 +147,6 @@ IMPORTANT: Return ONLY a valid JSON array, nothing else. Example: [{"barcode":"1
 
   } catch (error: any) {
     console.error('Error:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 }
