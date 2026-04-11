@@ -18,41 +18,41 @@ export const config = {
 };
 
 function extractJson(text: string): string {
-  let jsonStr = text.trim();
+  // Remove thinking tags completely
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
   
-  // Remove thinking tags like <think>...</think> or just <think> without closing tag
-  jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  
-  // Also remove any remaining thinking content before first JSON character
-  const firstBracket = jsonStr.search(/[\[{]/);
-  if (firstBracket > 0) {
-    jsonStr = jsonStr.substring(firstBracket);
+  // Find the first [ or { and take from there
+  const firstBracket = cleaned.match(/[\[{]/);
+  if (firstBracket) {
+    const startIndex = cleaned.indexOf(firstBracket[0]);
+    cleaned = cleaned.substring(startIndex);
   }
   
-  // Try to extract JSON array or object
-  const match = jsonStr.match(/^(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (match) {
-    jsonStr = match[1];
-  }
-  
-  return jsonStr;
+  return cleaned.trim();
 }
 
-function findJsonInText(text: string): any {
-  // Try to find and parse JSON array or object anywhere in text
-  const bracketMatch = text.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (bracketMatch) {
+function tryParseJson(text: string): any {
+  const cleaned = extractJson(text);
+  
+  // Try direct parse
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {}
+  
+  // Try to find JSON array or object
+  const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (match) {
     try {
-      return JSON.parse(bracketMatch[1]);
+      return JSON.parse(match[1]);
     } catch (e) {
-      // Try to fix common issues
+      // Try fixing trailing commas
       try {
-        // Remove trailing commas
-        const fixed = bracketMatch[1].replace(/,(\s*[\]}])/g, '$1');
+        const fixed = match[1].replace(/,(\s*[\]}])/g, '$1');
         return JSON.parse(fixed);
       } catch (e2) {}
     }
   }
+  
   return null;
 }
 
@@ -167,25 +167,18 @@ Required fields:
     
     if (result.choices && result.choices[0]?.message?.content) {
       const responseText = result.choices[0].message.content;
+      const parsed = tryParseJson(responseText);
       
-      // Try to extract and parse JSON
-      const jsonStr = extractJson(responseText);
-      try {
-        const parsedData = JSON.parse(jsonStr);
-        return res.status(200).json(parsedData);
-      } catch (e) {
-        // Try to find JSON anywhere in text
-        const found = findJsonInText(responseText);
-        if (found) {
-          return res.status(200).json(found);
-        }
-        console.error('JSON parse failed');
-        console.error('Cleaned:', jsonStr.substring(0, 300));
-        return res.status(500).json({ 
-          error: `JSON解析失败`,
-          raw: responseText.substring(0, 500)
-        });
+      if (parsed) {
+        return res.status(200).json(parsed);
       }
+      
+      // If still fails, show what we got
+      const cleaned = extractJson(responseText);
+      return res.status(500).json({ 
+        error: `JSON解析失败`,
+        cleaned: cleaned.substring(0, 500)
+      });
     }
     
     return res.status(500).json({ error: 'Invalid API response', details: result });
