@@ -104,7 +104,7 @@ Return ONLY the JSON array, no additional text.`
 
     let apiUrl = '';
     const useProxy = config.baseUrl && !config.baseUrl.includes('googleapis.com');
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemma-4-31b-it';
     
     if (useProxy) {
       const base = config.baseUrl.replace(/\/$/, '');
