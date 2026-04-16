@@ -11,6 +11,13 @@ function getConfig() {
   return { apiKey, baseUrl };
 }
 
+// 检测是否为 OpenAI 兼容格式的中转 API
+function isOpenAIFormat(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  // 如果不是 googleapis.com，假设是 OpenAI 兼容中转
+  return !baseUrl.includes('googleapis.com');
+}
+
 export const config = {
   api: {
     bodyParser: false,
@@ -83,22 +90,47 @@ Fields: barcode, name, size, spec, price, currency, moq, status, supplier
 Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100,"currency":"HKD","moq":10,"status":"現貨","supplier":"YJQ"}]`
     });
 
-    const requestBody: any = {
-      contents: [content],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      }
-    };
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+    let apiUrl: string;
+    let requestBody: any;
+    const useOpenAIFormat = isOpenAIFormat(config.baseUrl);
 
-    let apiUrl = '';
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-image';
-    
-    if (config.baseUrl && !config.baseUrl.includes('googleapis.com')) {
-      const base = config.baseUrl.replace(/\/$/, '');
-      apiUrl = `${base}/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
+    if (useOpenAIFormat) {
+      const base = config.baseUrl!.replace(/\/$/, '');
+      apiUrl = `${base}/chat/completions`;
+      
+      const textContent = content.parts.map((p: any) => p.text || '').join('\n');
+      let imageContent = null;
+      
+      if (content.parts[0]?.inlineData) {
+        imageContent = {
+          type: 'image_url',
+          image_url: {
+            url: `data:${content.parts[0].inlineData.mimeType};base64,${content.parts[0].inlineData.data}`
+          }
+        };
+      }
+      
+      requestBody = {
+        model: modelName,
+        messages: [{
+          role: 'user',
+          content: imageContent 
+            ? [{ type: 'text', text: textContent }, imageContent]
+            : textContent
+        }],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+      };
     } else {
       apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.apiKey}`;
+      requestBody = {
+        contents: [content],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        }
+      };
     }
 
     const fetchOptions: RequestInit = {
@@ -116,7 +148,17 @@ Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100
 
     const result = await response.json();
     
-    if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+    if (useOpenAIFormat) {
+      const text = result.choices?.[0]?.message?.content;
+      if (text) {
+        try {
+          const parsedData = JSON.parse(text);
+          return res.status(200).json(parsedData);
+        } catch (e) {
+          return res.status(500).json({ error: 'JSON解析失败', raw: text.substring(0, 500) });
+        }
+      }
+    } else if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
       const text = result.candidates[0].content.parts[0].text;
       try {
         const parsedData = JSON.parse(text);
