@@ -62,7 +62,10 @@ export default async function handler(req: any, res: any) {
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
       body: JSON.stringify(requestBody)
     };
 

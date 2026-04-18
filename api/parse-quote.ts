@@ -11,10 +11,8 @@ function getConfig() {
   return { apiKey, baseUrl };
 }
 
-// 检测是否为 OpenAI 兼容格式的中转 API
 function isOpenAIFormat(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
-  // 如果不是 googleapis.com，假设是 OpenAI 兼容中转
   return !baseUrl.includes('googleapis.com');
 }
 
@@ -135,7 +133,10 @@ Example: [{"barcode":"123","name":"Test","size":"100ml","spec":"EDP","price":100
 
     const fetchOptions: RequestInit = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
       body: JSON.stringify(requestBody)
     };
 
