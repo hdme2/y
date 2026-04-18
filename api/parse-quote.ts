@@ -1,3 +1,4 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as xlsx from 'xlsx';
 
 function getConfig() {
@@ -16,13 +17,7 @@ function isOpenAIFormat(baseUrl: string | undefined): boolean {
   return !baseUrl.includes('googleapis.com');
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-export default async function handler(req: any, res: any) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -33,9 +28,9 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ error: 'VITE_API_KEY environment variable is required' });
     }
 
-    const mimeType = req.body.mimeType;
-    const text = req.body.text;
-    const file = req.body.file;
+    const mimeType = req.body?.mimeType;
+    const text = req.body?.text;
+    const file = req.body?.file;
     
     let content: any = { role: 'user', parts: [] };
 

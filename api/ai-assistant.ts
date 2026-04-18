@@ -1,3 +1,5 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
 function getConfig() {
   const apiKey = process.env.VITE_API_KEY || process.env.GEMINI_API_KEY;
   const baseUrl = process.env.VITE_BASE_URL || process.env.GEMINI_BASE_URL;
@@ -14,7 +16,7 @@ function isOpenAIFormat(baseUrl: string | undefined): boolean {
   return !baseUrl.includes('googleapis.com');
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
